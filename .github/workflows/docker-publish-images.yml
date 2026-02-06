@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - 'main'
+  workflow_dispatch: # 显式增加手动触发支持
 
 jobs:
   docker-base-image:
