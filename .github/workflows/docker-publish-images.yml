@@ -50,7 +50,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - run: cd .. && just patch
+      #- run: cd .. && just patch
 
       - id: prepare
         run: echo "tag=$(cat ../version)"  >> $GITHUB_ENV
