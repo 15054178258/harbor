@@ -126,17 +126,15 @@ jobs:
           esac;
 
       - name: Build & Publish Multi-arch Image
-        # 使用 build-push-action 替代 make build 
         uses: docker/build-push-action@v6
         with:
           context: ./harbor
-          # 根据组件动态选择 Dockerfile 路径
           file: ./harbor/make/photon/${{ matrix.component == 'trivy_adapter' && 'trivy-adapter' || matrix.component }}/Dockerfile
-          platforms: linux/amd64,linux/arm64 # 强制多架构构建
+          platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            VERSIONTAG=${{ env.tag }}
-            BASEIMAGETAG=${{ env.tag }}
-            BASEIMAGENAMESPACE=ghcr.io/${{ github.repository }}
+            # 必须对应 Dockerfile 里的变量名
+            harbor_base_image_version=${{ env.tag }}
+            harbor_base_namespace=ghcr.io/${{ github.repository }}
           tags: |
             ghcr.io/${{ github.repository }}/harbor-${{ matrix.component == 'trivy_adapter' && 'trivy-adapter' || matrix.component }}:${{ env.tag }}
