@@ -149,3 +149,14 @@ jobs:
             registryctl) make build BUILDTARGET="_build_registry _build_registryctl" ${CTX} ;;
             *)           make build BUILDTARGET="_build_${{ matrix.component }}" ${CTX} ;;
           esac;
+
+          # 3. 手动推送到你的仓库 (新增部分)
+          # 注意：registryctl 会同时生成两个镜像，需要特殊处理
+          if [ "${{ matrix.component }}" = "registryctl" ]; then
+            docker push ${IMAGENAMESPACE}/harbor-registry:${{ env.tag }}
+            docker push ${IMAGENAMESPACE}/harbor-registryctl:${{ env.tag }}
+          else
+            # 将下划线转为横杠以匹配 Harbor 的镜像命名习惯
+            COMP=$(echo "${{ matrix.component }}" | tr '_' '-')
+            docker push ${IMAGENAMESPACE}/harbor-${COMP}:${{ env.tag }}
+          fi
