@@ -1,10 +1,7 @@
 name: Docker publish
 
 on:
-  #push:
-  #  branches:
-  #    - 'main'
-  workflow_dispatch: # 显式增加手动触发支持
+  workflow_dispatch: 
 
 jobs:
   docker-base-image:
@@ -34,45 +31,37 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-          # 显式使用内置的 GITHUB_TOKEN 或自定义的 PAT
           token: ${{ secrets.GITHUB_TOKEN }} 
-          # 如果仓库很大，增加 fetch-depth
           fetch-depth: 0
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v3 # 允许构建 arm64 镜像
       - uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
           driver-opts: network=host
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      #- run: cd .. && just patch
-
       - id: prepare
-        run: echo "tag=$(cat ../version)"  >> $GITHUB_ENV
+        run: echo "tag=$(cat ../version)" >> $GITHUB_ENV
 
       - name: Build base image
         uses: docker/build-push-action@v6
         with:
           context: ./harbor
           file: ./harbor/make/photon/${{ matrix.component }}/Dockerfile.base
-          platforms: linux/amd64,linux/arm64
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ env.tag }}
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64,linux/arm64 # 同时构建 amd64 和 arm64
+          push: true
           tags: ghcr.io/${{ github.repository }}/harbor-${{ matrix.component }}-base:${{ env.tag }}
 
   docker-image:
     needs:
       - docker-base-image
-
     runs-on: ubuntu-latest
-
     strategy:
       fail-fast: false
       matrix:
@@ -104,13 +93,11 @@ jobs:
         with:
           go-version: '^1.x'
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v3 # 必须包含，用于模拟 arm64 环境
       - uses: docker/setup-buildx-action@v3
         with:
           driver: docker-container
           driver-opts: network=host
-
-      #- run: cd .. && just patch
 
       - uses: docker/login-action@v3
         with:
@@ -121,43 +108,35 @@ jobs:
       - id: prepare
         run: echo "tag=$(cat ../version)" >> $GITHUB_ENV
 
-      - name: Build & Publish images
-        env:
-          IMAGENAMESPACE: ghcr.io/${{ github.repository }}
-          BASEIMAGENAMESPACE: ghcr.io/${{ github.repository }}
-          IMAGELABELS: org.opencontainers.image.source=https://github.com/${{ github.repository }}
-          MULTIARCH: true
-          TRIVYFLAG: true
-          CHARTFLAG: true
-          NOTARYFLAG: true
+      - name: Compile Binaries (Native)
+        # 这一步仅在 Runner (x86) 上编译二进制文件，以加快速度
         run: |
           set -eux;
-
-          CTX="BUILDBIN=true VERSIONTAG=${{ env.tag }} BASEIMAGETAG=${{ env.tag }} MULTIARCH=${MULTIARCH} IMAGENAMESPACE=${IMAGENAMESPACE} BASEIMAGENAMESPACE=${BASEIMAGENAMESPACE} TRIVYFLAG=${TRIVYFLAG} CHARTFLAG=${CHARTFLAG} NOTARYFLAG=${CHARTFLAG} IMAGELABELS=${IMAGELABELS}"
-
+          TAG=${{ env.tag }}
+          IMAGENAMESPACE=ghcr.io/${{ github.repository }}
+          CTX="BUILDBIN=true VERSIONTAG=${TAG} BASEIMAGETAG=${TAG} MULTIARCH=true IMAGENAMESPACE=${IMAGENAMESPACE} BASEIMAGENAMESPACE=${IMAGENAMESPACE}"
+          
           make versions_prepare ${CTX};
-
+          
           case ${{ matrix.component }} in
-            core)                   make compile_core ${CTX} ;;
-            jobservice)             make compile_jobservice ${CTX};;
-            registryctl)            make compile_registryctl ${CTX};;
+            core)                    make compile_core ${CTX} ;;
+            jobservice)              make compile_jobservice ${CTX};;
+            registryctl)             make compile_registryctl ${CTX};;
             standalone_db_migrator) make compile_standalone_db_migrator ${CTX} ;;
           esac;
 
-          case ${{ matrix.component }} in
-            exporter)    make build BUILDTARGET="_compile_and_build_exporter" ${CTX} ;;
-            registryctl) make build BUILDTARGET="_build_registry _build_registryctl" ${CTX} ;;
-            *)           make build BUILDTARGET="_build_${{ matrix.component }}" ${CTX} ;;
-          esac;
-
-          # 2. 打印当前本地所有镜像，确认到底生成了什么名字 (调试用)
-          docker images
-
-          # 3. 动态获取并推送 (自动适配路径)
-          # 我们不再手动拼凑路径，而是直接根据标签推送
-          TAG=${{ env.tag }}
-          # 查找所有带这个标签的镜像并推送
-          docker images --format "{{.Repository}}:{{.Tag}}" | grep "$TAG" | grep -v "base" | while read -r IMG; do
-            echo "Pushing $IMG..."
-            docker push "$IMG"
-          done
+      - name: Build & Publish Multi-arch Image
+        # 使用 build-push-action 替代 make build 
+        uses: docker/build-push-action@v6
+        with:
+          context: ./harbor
+          # 根据组件动态选择 Dockerfile 路径
+          file: ./harbor/make/photon/${{ matrix.component == 'trivy_adapter' && 'trivy-adapter' || matrix.component }}/Dockerfile
+          platforms: linux/amd64,linux/arm64 # 强制多架构构建
+          push: true
+          build-args: |
+            VERSIONTAG=${{ env.tag }}
+            BASEIMAGETAG=${{ env.tag }}
+            BASEIMAGENAMESPACE=ghcr.io/${{ github.repository }}
+          tags: |
+            ghcr.io/${{ github.repository }}/harbor-${{ matrix.component == 'trivy_adapter' && 'trivy-adapter' || matrix.component }}:${{ env.tag }}
