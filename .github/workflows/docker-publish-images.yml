@@ -133,7 +133,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           build-args: |
-            # 必须对应 Dockerfile 里的变量名
+            # 1. 补全编译阶段镜像 (exporter 等组件必须)
+            build_image=golang:1.21-bookworm
+            # 2. 对应底座镜像变量
             harbor_base_image_version=${{ env.tag }}
             harbor_base_namespace=ghcr.io/${{ github.repository }}
           tags: |
