@@ -125,18 +125,27 @@ jobs:
             standalone_db_migrator) make compile_standalone_db_migrator ${CTX} ;;
           esac;
 
-      - name: Build & Publish Multi-arch Image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./harbor
-          file: ./harbor/make/photon/${{ matrix.component == 'trivy_adapter' && 'trivy-adapter' || matrix.component }}/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          build-args: |
-            # 1. 补全编译阶段镜像 (exporter 等组件必须)
-            build_image=golang:1.21-bookworm
-            # 2. 对应底座镜像变量
-            harbor_base_image_version=${{ env.tag }}
-            harbor_base_namespace=ghcr.io/${{ github.repository }}
-          tags: |
-            ghcr.io/${{ github.repository }}/harbor-${{ matrix.component == 'trivy_adapter' && 'trivy-adapter' || matrix.component }}:${{ env.tag }}
+      - name: Build & Publish Multi-arch Images
+        env:
+          # 关键：告诉 Docker 默认使用 buildx 插件
+          DOCKER_CLI_EXPERIMENTAL: enabled
+        run: |
+          set -eux;
+          # 创建并启用多架构构建器
+          docker buildx create --use --driver docker-container --driver-opt network=host
+          
+          TAG=${{ env.tag }}
+          IMAGENAMESPACE=ghcr.io/${{ github.repository }}
+          
+          # CTX 中必须包含 MULTIARCH=true
+          CTX="BUILDBIN=true VERSIONTAG=${TAG} BASEIMAGETAG=${TAG} MULTIARCH=true IMAGENAMESPACE=${IMAGENAMESPACE} BASEIMAGENAMESPACE=${IMAGENAMESPACE} PUSH=true"
+          
+          # 这一步会处理所有的二进制编译并放入对应的 binary/ 目录
+          make versions_prepare ${CTX};
+
+          # 直接使用原有的 make build 逻辑，但确保它能触发多架构推送
+          case ${{ matrix.component }} in
+            exporter)    make build BUILDTARGET="_compile_and_build_exporter" ${CTX} ;;
+            registryctl) make build BUILDTARGET="_build_registry _build_registryctl" ${CTX} ;;
+            *)           make build BUILDTARGET="_build_${{ matrix.component }}" ${CTX} ;;
+          esac;
